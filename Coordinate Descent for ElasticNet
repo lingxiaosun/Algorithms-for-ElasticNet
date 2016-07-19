@@ -1,0 +1,50 @@
+//坐标下降，矩阵来写
+spark-shell --driver-memory 10G 
+import java.util.concurrent.ThreadLocalRandom
+import breeze.linalg._
+import scala.math._
+val n = 1000
+val p = 1000
+val r = ThreadLocalRandom.current
+val beta = DenseVector((1 to p).map(i =>{if(i<11) 1.0 else 0.0}).toArray)
+//生成x
+val x=(0 until n).map {iter =>
+val xrow= (0 until p).map(xx => r.nextGaussian).toArray[Double]
+DenseVector(xrow)
+}.toArray
+//生成y
+val y=DenseVector(x.map {xrow=>
+xrow dot beta+0.03*r.nextGaussian
+})
+//把x做成一个矩阵
+val x_Mat = DenseMatrix.zeros[Double](n,p)
+for (i<-0 until n)
+{x_Mat(i,::):=x(i).t}
+
+def sfun(wi:Double,para:Double)={signum(wi) * scala.math.max(0.0, abs(wi) - para)}//迭代函数
+
+def net(x_Mat:DenseMatrix[Double],y:DenseVector[Double],ld:Double,max_iter:Int,alpha:Double,tol:Double)={
+    val n=x_Mat.rows
+    val p=x_Mat.cols
+    val beta=(x_Mat.t* y)*(1.0/n)//beta的初始值
+    var iter = 1
+	var value_pre=1000.0
+	var diff=1000.0
+    while(iter<max_iter & diff>tol){//双条件  迭代次数与目标函数值
+        for (j<-0 until p){
+            beta(j) = 0
+            val z = y - x_Mat* beta//Mat* beta实现矩阵乘向量，z是偏残差
+            beta(j) = sfun((x_Mat(::,j) dot z)/n,ld*alpha)/(1+ld*(1-alpha))}//(x_Mat(::,j) dot z)/n计算了一元最小二乘beta
+    iter+=1
+    val value=norm(y - x_Mat* beta, 2.0) * norm(y - x_Mat* beta, 2.0)/2/n+ld*norm(beta, 1.0)*alpha+0.5 * ld*norm(beta, 2.0) * norm(beta, 2.0)*(1-alpha)//目标函数值
+    diff=abs(value-value_pre)
+    value_pre=value
+    }
+    beta//返回beta
+}
+val ld=0.1
+val alpha=0.8
+val max_iter=15
+val tol=0.01
+val beta=net(x_Mat,y,ld,max_iter,alpha,tol)//1000列20秒，结果前10压到1左右，后面为0
+for (i<-0 until 20){println("beta%s is %.2f".format(i,beta(i)))}

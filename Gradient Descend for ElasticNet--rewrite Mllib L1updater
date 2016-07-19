@@ -1,0 +1,65 @@
+//改写自带的L1的EN
+spark-shell --driver-memory 10G 
+import scala.math._
+import breeze.linalg.{norm => brzNorm, axpy => brzAxpy, Vector => BV}
+import org.apache.spark.annotation.DeveloperApi
+import org.apache.spark.mllib.linalg.{Vectors, Vector}
+class ElasticNetUpdater(alpha:Double) extends org.apache.spark.mllib.optimization.Updater {//拓展Updater，注意引用路径要全
+  override def compute(
+      weightsOld: Vector,
+      gradient: Vector,
+      stepSize: Double,
+      iter: Int,
+      regParam: Double): (Vector, Double) = {
+    import breeze.linalg._//不加后面会报DenseVetor的错
+    import scala.math._
+    val thisIterStepSize = stepSize / math.sqrt(iter)
+    val brzWeights= DenseVector(weightsOld.toArray)//把他的asBreeze改成了这样写.删除了brzWeights后面的:BV[Double]
+    // Take gradient step
+    brzAxpy(-thisIterStepSize, DenseVector(gradient.toArray), brzWeights)//中间的gradient的asBreeze改成了这样写，brzAxpy要求输入double，densevector，densevector
+    val shrinkageVal = regParam * thisIterStepSize
+    var i = 0
+    val len = brzWeights.length
+    //Apply proximal operator
+    while (i < len) {
+      val wi = brzWeights(i)
+      brzWeights(i) = signum(wi) * scala.math.max(0.0, abs(wi) - alpha*shrinkageVal)/(1+shrinkageVal*(1-alpha))
+      i += 1
+    }
+    val norm2 = brzNorm(brzWeights, 2.0)
+    (Vectors.dense(brzWeights.toArray), brzNorm(brzWeights, 1.0) * regParam*alpha+0.5 * regParam * norm2 * norm2*(1-alpha))//把他的fromBreeze改成了这样写
+  }
+}
+
+
+import java.util.concurrent.ThreadLocalRandom
+import org.apache.spark.mllib.optimization._
+import breeze.linalg._
+val n = 10000
+val p = 10000
+val r = ThreadLocalRandom.current
+val beta = (1 to p).map(i =>{if(i<101) 1.0 else 0.0}).toArray
+val points = sc.parallelize(0 until n, 2).map {iter =>//2是节点数
+val x= (0 until p).map(x => r.nextGaussian).toArray[Double]
+val y = DenseVector(x) dot DenseVector(beta)+0.03*r.nextGaussian
+(y, Vectors.dense(x))
+}
+
+val updater = new ElasticNetUpdater(0.8)
+val gradient = new LeastSquaresGradient()
+val stepSize = 1.0
+val numIterations = 20
+val regParam = 0.01
+val miniBatchFrac = 0.9
+val beta_initial=Vectors.dense((0 until p).map(x => r.nextDouble).toArray[Double])//beat初始值
+val (weights, loss) = GradientDescent.runMiniBatchSGD(
+points,
+gradient,
+updater,
+stepSize,
+numIterations,
+regParam,
+miniBatchFrac,
+beta_initial)
+for (i<-0 until 20){println("beta%s is %.2f".format(i,weights(i)))}//前面100个1左右
+for (i<-0 until 20){println("beta%s is %.2f".format(100+200*i,weights(100+200*i)))}//后面0或接近0

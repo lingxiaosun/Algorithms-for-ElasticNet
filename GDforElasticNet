@@ -1,0 +1,57 @@
+//手写梯度下降
+spark-shell --driver-memory 10G 
+import breeze.stats.distributions._
+import breeze.linalg._
+import java.util.concurrent.ThreadLocalRandom
+import scala.math._
+val n=10000
+val p=10000
+val beta0 = DenseVector((1 to p).map(i =>{if(i<101) 1.0 else 0.0}).toArray)
+val r = ThreadLocalRandom.current
+
+val data_RDD = sc.parallelize(0 until n, 2).map {iter =>
+val x= DenseVector((0 until p).map(x => r.nextGaussian).toArray[Double])
+val y = x dot beta0+0.03*r.nextGaussian
+(y, x)
+}
+
+def ElasticNetUpdater(beta:DenseVector[Double],ld:Double,alpha:Double)={
+  var i = 0
+  val len = beta.length
+  while (i < len) {
+    val wi = beta(i)
+    beta(i) = signum(wi) * scala.math.max(0.0, abs(wi) - alpha*ld)/(1+ld*(1-alpha))
+    i += 1
+}}
+def ENwithGD(data_RDD:org.apache.spark.rdd.RDD[(Double, breeze.linalg.DenseVector[Double])],
+      ld:Double,max_iter:Int,alpha:Double,stepsize:Double,tol:Double)={
+      val p = data_RDD.first._2.length
+      val n = data_RDD.count().toInt 
+      val beta=DenseVector((0 until p).map(betaj=>0.0).toArray)//beta初始值
+      var iter = 1
+      var value_pre=1000.0
+      var diff=1000.0
+      while(iter<max_iter & diff>tol){
+         val gradient=data_RDD.map(yx=>(yx._2,(yx._2 dot beta)-yx._1)).map(xdiff=>xdiff._1:*=xdiff._2).reduce((x,y)=>x+y):*=(1.0/n)//计算梯度
+         val thisIterstepsize=stepsize/sqrt(iter)
+         //take gradient step 
+         gradient:*=thisIterstepsize
+         beta:-=gradient
+         val thisIterld=ld*thisIterstepsize
+         //Apply proximal operator
+         ElasticNetUpdater(beta,thisIterld,alpha)
+         iter+=1
+         val value=data_RDD.map(yx=>(yx._2 dot beta)-yx._1).map(x=>x*x).reduce((x,y)=>x+y)/2/n+ld*norm(beta, 1.0)*alpha+0.5 * ld*norm(beta, 2.0) * norm(beta, 2.0)*(1-alpha)
+         diff=abs(value-value_pre)
+         value_pre=value
+      }
+    beta
+}
+val ld = 0.01
+val max_iter = 20
+val stepsize=1.0
+val alpha=0.8
+val tol=0.01
+val beta=ENwithGD(data_RDD,ld,max_iter,alpha,stepsize,tol)
+for (i<-0 until 10){println("beta%s is %.2f".format(i,beta(i)))}
+for (i<-0 until 10){println("beta%s is %.2f".format(100+200*i,beta(100+200*i)))}
